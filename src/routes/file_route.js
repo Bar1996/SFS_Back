@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { storage } = require('../../firebaseConfig');
-const { ref, uploadBytesResumable, getDownloadURL, listAll, getMetadata } = require('firebase/storage');
+const { ref, uploadBytesResumable, getDownloadURL, listAll, getMetadata, deleteObject  } = require('firebase/storage');
 const middleware = require('../common/auth_middleware');
 const crypto = require('crypto');
 const iconv = require('iconv-lite');
@@ -44,27 +44,20 @@ router.post('/upload', upload.single('file'), middleware, async (req, res) => {
       return res.status(400).send('No file uploaded.');
     }
 
-    const userId = req.body.user.uid; // Retrieve user ID from middleware
-    console.log('userId:', userId);
-
-    // Decode the file name from 'binary' to 'utf-8'
+    const userId = req.body.user.uid;
     const fileName = iconv.decode(Buffer.from(req.file.originalname, 'binary'), 'utf8');
-    console.log('fileName:', fileName);
 
     // Encrypt the file buffer
     const { encrypted, iv } = encryptFile(req.file.buffer);
 
-    // Store IV as part of the metadata for decryption later
     const metadata = {
       contentType: req.file.mimetype,
       customMetadata: {
-        iv: iv.toString('hex'), // Store the IV as metadata
+        iv: iv.toString('hex'),
       },
     };
 
     const storageRef = ref(storage, `uploads/${userId}/${fileName}`);
-
-    // Upload encrypted file to Firebase Storage
     const uploadTask = uploadBytesResumable(storageRef, encrypted, metadata);
 
     uploadTask.on(
@@ -79,7 +72,17 @@ router.post('/upload', upload.single('file'), middleware, async (req, res) => {
       },
       async () => {
         const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-        res.status(200).send({ url: downloadURL });
+        
+        // Retrieve metadata of the uploaded file
+        const fileMetadata = await getMetadata(uploadTask.snapshot.ref);
+
+        // Return the URL and metadata (including file size and modified date)
+        res.status(200).send({
+          url: downloadURL,
+          name: fileName,
+          size: fileMetadata.size, // file size in bytes
+          modified: fileMetadata.updated || fileMetadata.timeCreated // last modified or created date
+        });
       }
     );
   } catch (error) {
@@ -87,6 +90,7 @@ router.post('/upload', upload.single('file'), middleware, async (req, res) => {
     res.status(500).send('Error uploading file');
   }
 });
+
 
 // Helper function to download file as buffer
 async function downloadFileAsBuffer(url) {
@@ -140,7 +144,7 @@ router.get('/download/:fileName', middleware, async (req, res) => {
 });
 
 
-// List all files for a user
+// List all files for a user with file size and last modified date
 router.get('/files', middleware, async (req, res) => {
   try {
     const userId = req.body.user.uid;
@@ -150,7 +154,14 @@ router.get('/files', middleware, async (req, res) => {
     const userFiles = [];
     for (const itemRef of fileList.items) {
       const url = await getDownloadURL(itemRef);
-      userFiles.push({ name: itemRef.name, url });
+      const metadata = await getMetadata(itemRef); // Get metadata for the file
+      
+      userFiles.push({
+        name: itemRef.name,
+        url,
+        size: metadata.size, // File size in bytes
+        modified: metadata.updated || metadata.timeCreated, // Last modified or creation time
+      });
     }
 
     res.status(200).send(userFiles);
@@ -159,5 +170,95 @@ router.get('/files', middleware, async (req, res) => {
     res.status(500).send('Error fetching files');
   }
 });
+
+
+router.delete('/:fileName', middleware, async (req, res) => {
+  try {
+    const userId = req.body.user.uid;
+    const fileName = req.params.fileName;
+
+    console.log('Delete Request Received');
+    console.log(`User ID: ${userId}`);
+    console.log(`File to delete: ${fileName}`);
+
+    const storageRef = ref(storage, `uploads/${userId}/${fileName}`);
+    console.log('Firebase storage reference created:', storageRef.fullPath);
+
+    // Delete the file from Firebase Storage
+    await deleteObject(storageRef);
+    console.log('File deleted successfully from Firebase Storage');
+
+    res.status(200).send({ success: true, message: 'File deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting file:', error);
+    res.status(500).send({ success: false, message: 'Error deleting file', error: error.message });
+  }
+});
+
+
+
+
+// Rename file route
+router.patch('/rename/:fileName', middleware, async (req, res) => {
+  try {
+    const userId = req.body.user.uid;
+    const oldFileName = req.params.fileName;
+    let newFileName = req.body.newFileName;
+
+    console.log('Rename Request Received');
+    console.log(`User ID: ${userId}`);
+    console.log(`Old file name: ${oldFileName}`);
+    console.log(`New file name (before extension check): ${newFileName}`);
+
+    // Extract the file extension from the old file name
+    const fileExtension = oldFileName.split('.').pop();
+
+    // Ensure the new file name has the correct extension
+    if (!newFileName.includes('.')) {
+      newFileName = `${newFileName}.${fileExtension}`;
+    }
+
+    console.log(`New file name (after extension check): ${newFileName}`);
+
+    const oldFileRef = ref(storage, `uploads/${userId}/${oldFileName}`);
+    const newFileRef = ref(storage, `uploads/${userId}/${newFileName}`);
+
+    console.log('Old Firebase storage reference created:', oldFileRef.fullPath);
+    console.log('New Firebase storage reference created:', newFileRef.fullPath);
+
+    // Get the old file's data
+    const downloadURL = await getDownloadURL(oldFileRef);
+    const encryptedBuffer = await downloadFileAsBuffer(downloadURL);
+    console.log('Old file data downloaded successfully');
+
+    // Get the metadata for the old file (including IV)
+    const oldMetadata = await getMetadata(oldFileRef);
+    console.log('Old file metadata retrieved:', oldMetadata);
+
+    // Prepare metadata for the new file, including custom metadata like IV
+    const newMetadata = {
+      contentType: oldMetadata.contentType,
+      customMetadata: oldMetadata.customMetadata, // Include IV and any other custom metadata
+    };
+
+    // Copy the file to the new name with the original metadata
+    await uploadBytesResumable(newFileRef, encryptedBuffer, newMetadata);
+    console.log('File uploaded with new name and metadata:', newFileName);
+
+    // Delete the old file
+    await deleteObject(oldFileRef);
+    console.log('Old file deleted successfully from Firebase Storage');
+
+    // Return the new file name
+    res.status(200).send({ success: true, newFileName });
+  } catch (error) {
+    console.error('Error renaming file:', error);
+    res.status(500).send({ success: false, message: 'Error renaming file', error: error.message });
+  }
+});
+
+
+
+
 
 module.exports = router;

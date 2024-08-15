@@ -1,0 +1,29 @@
+### POST /signup - Sign Up with Email and Password
+POST  http://localhost:3000/auth/signup
+Content-Type: application/json
+
+{
+  "email": "bar3668@gmail.com",
+  "password": "test123",
+  "name": "Bar Cohen"
+}
+
+
+### POST /login - Post login
+POST  http://localhost:3000/auth/login
+Content-Type: application/json
+
+{
+  "email": "bc9545677@gmail.com",
+  "password": "test123"
+}
+
+
+### POST /files/upload - Upload a file
+
+POST  http://localhost:3000/files/upload
+Content-Type: multipart/form-data
+
+{
+  "file": "C:\\Users\\barco\\Desktop\\test.txt"
+}

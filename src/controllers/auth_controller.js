@@ -54,7 +54,7 @@ const SignUpWithEmailAndPassword = async (req, res) => {
                     name: name,
                 });
                 // Send success response along with message
-                res.send({ success: true, message: "Verification email sent." });
+                res.send({ success: true, message: "Verification email sent.", userId: userObj.uid }); 
             } catch (error) {
                 console.error("Error saving user data:", error);
                 res.status(500).send("Error saving user data");

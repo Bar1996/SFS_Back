@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node Server.js",
     "dev": "nodemon Server.js",
-    "test": "jest --detectOpenHandles --forceExit",
-    "testplans": "jest --detectOpenHandles --forceExit ./tests/plans.test.js",
+    "test": "jest --detectOpenHandles --forceExit --coverage",
+    "testfile": "jest --detectOpenHandles --forceExit ./tests/file.test.js",
     "lint": "eslint src/* --color --fix"
   },
   "author": "Bar Cohen",
